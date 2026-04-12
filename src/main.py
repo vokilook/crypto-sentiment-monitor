@@ -12,6 +12,7 @@ from telegram_bot import TelegramBot
 from sentiment_analyzer import FinSentimentAnalyzer
 
 # Добавьте в начало main.py, после импорта Config
+print("Версия 0.1a")
 print("=== DEBUG: Проверка переменных окружения ===")
 print(f"TELEGRAM_WORKER_URL: {os.getenv('TELEGRAM_WORKER_URL', 'NOT SET')}")
 print(f"TELEGRAM_BOT_TOKEN: {os.getenv('TELEGRAM_BOT_TOKEN', 'NOT SET')[:10] if os.getenv('TELEGRAM_BOT_TOKEN') else 'NOT SET'}...")
