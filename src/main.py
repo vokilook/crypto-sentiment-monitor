@@ -177,6 +177,7 @@ if __name__ == "__main__":
         
         # Определяем итоговый сигнал
         combined_signal = {}
+        combined_signal['avg_sentiment'] = avg_sentiment
         if avg_sentiment > 0.1:
             combined_signal['message'] = "🐂 БЫЧИЙ СИГНАЛ - Рынок настроен позитивно"
             combined_signal['advice'] = "Рассмотрите возможность увеличения позиций"

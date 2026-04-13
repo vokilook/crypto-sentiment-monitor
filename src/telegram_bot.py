@@ -1,11 +1,12 @@
 """
-Модуль для отправки сообщений в Telegram
+Модуль для отправки сообщений в Telegram с повторными попытками
 """
 import requests
 from datetime import datetime
+import time
 
 class TelegramBot:
-    def __init__(self, worker_url: str, bot_token: str, chat_id: str):
+    def __init__(self, worker_url: str, bot_token: str, chat_id: str, max_retries: int = 5):
         """
         Инициализация Telegram бота
         
@@ -13,27 +14,26 @@ class TelegramBot:
             worker_url: URL вашего Cloudflare Worker (прокси)
             bot_token: Токен бота
             chat_id: ID чата для отправки сообщений
+            max_retries: Максимальное количество попыток отправки
         """
         self.worker_url = worker_url.rstrip('/')
         self.bot_token = bot_token
         self.chat_id = chat_id
+        self.max_retries = max_retries  # <-- ЭТА СТРОКА БЫЛА ПРОПУЩЕНА
     
-    def send_message(self, message: str, parse_mode: str = "HTML") -> bool:
+    def send_message(self, message: str, parse_mode: str = "HTML", retry_count: int = 0) -> bool:
         """
-        Отправляет текстовое сообщение в Telegram
+        Отправляет текстовое сообщение в Telegram с повторными попытками при ошибке
         
         Args:
             message: Текст сообщения
             parse_mode: Форматирование (HTML или Markdown)
+            retry_count: Текущий номер попытки (для внутреннего использования)
         
         Returns:
             bool: Успешность отправки
         """
         try:
-            # Кодируем сообщение для URL
-            import urllib.parse
-            encoded_message = urllib.parse.quote(message)
-            
             url = f"{self.worker_url}/bot{self.bot_token}/sendMessage"
             params = {
                 'chat_id': self.chat_id,
@@ -41,17 +41,50 @@ class TelegramBot:
                 'parse_mode': parse_mode
             }
             
+            print(f"📤 Отправка сообщения в Telegram (попытка {retry_count + 1}/{self.max_retries})...")
             response = requests.post(url, json=params, timeout=30)
             
             if response.status_code == 200:
-                print("✅ Сообщение отправлено в Telegram")
+                print("✅ Сообщение успешно отправлено в Telegram")
                 return True
             else:
-                print(f"❌ Ошибка отправки: {response.status_code}")
-                return False
+                print(f"❌ Ошибка отправки: HTTP {response.status_code}")
+                print(f"   Ответ сервера: {response.text[:200]}")
                 
+                if retry_count < self.max_retries - 1:
+                    wait_time = 60
+                    print(f"⏳ Повторная попытка через {wait_time} секунд...")
+                    time.sleep(wait_time)
+                    return self.send_message(message, parse_mode, retry_count + 1)
+                else:
+                    print(f"❌ Сообщение не отправлено после {self.max_retries} попыток")
+                    return False
+                
+        except requests.exceptions.Timeout:
+            print(f"❌ Таймаут при отправке (попытка {retry_count + 1})")
+            if retry_count < self.max_retries - 1:
+                wait_time = 60
+                print(f"⏳ Повторная попытка через {wait_time} секунд...")
+                time.sleep(wait_time)
+                return self.send_message(message, parse_mode, retry_count + 1)
+            return False
+            
+        except requests.exceptions.ConnectionError:
+            print(f"❌ Ошибка соединения (попытка {retry_count + 1})")
+            if retry_count < self.max_retries - 1:
+                wait_time = 60
+                print(f"⏳ Повторная попытка через {wait_time} секунд...")
+                time.sleep(wait_time)
+                return self.send_message(message, parse_mode, retry_count + 1)
+            return False
+            
         except Exception as e:
-            print(f"❌ Ошибка при отправке в Telegram: {e}")
+            print(f"❌ Неожиданная ошибка: {e}")
+            if retry_count < self.max_retries - 1:
+                wait_time = 60
+                print(f"⏳ Повторная попытка через {wait_time} секунд...")
+                time.sleep(wait_time)
+                return self.send_message(message, parse_mode, retry_count + 1)
             return False
     
     def send_analysis_report(self, btc_data: dict, sentiment_stats: dict, 
@@ -59,19 +92,9 @@ class TelegramBot:
                             combined_signal: dict):
         """
         Отправляет форматированный аналитический отчёт
-        
-        Args:
-            btc_data: Данные о цене BTC
-            sentiment_stats: Статистика тональности
-            top_positive: Топ позитивных новостей
-            top_negative: Топ негативных новостей
-            combined_signal: Комбинированный сигнал
         """
-        # Формируем красивое сообщение
         message = self._format_report(btc_data, sentiment_stats, top_positive, 
                                       top_negative, combined_signal)
-        
-        # Отправляем в Telegram
         return self.send_message(message, parse_mode="HTML")
     
     def _format_report(self, btc_data: dict, sentiment_stats: dict,
@@ -79,7 +102,6 @@ class TelegramBot:
         """
         Форматирует отчёт в HTML для Telegram
         """
-        # Заголовок с датой
         now = datetime.now()
         message = f"<b>📊 CRYPTO SENTIMENT REPORT</b>\n"
         message += f"<i>{now.strftime('%Y-%m-%d %H:%M:%S')}</i>\n"
@@ -126,7 +148,7 @@ class TelegramBot:
         
         # Итоговый сигнал
         message += f"{'='*29}\n"
-        message += f"🎯 <b>FINAL SIGNAL</b>\n"
+        message += f"🎯 <b>FINAL SIGNAL</b> <b>{sentiment_stats['avg_sentiment']:.3f}</b>\n"
         message += f"{'='*29}\n"
         message += f"{combined_signal['message']}\n"
         
@@ -149,12 +171,11 @@ class TelegramBot:
 
 # Пример использования
 if __name__ == "__main__":
-    # Ваши данные
     WORKER_URL = "https://old-scene-b197.vokilook.workers.dev"
-    BOT_TOKEN = "6***-yd0"  # Замените на реальный токен
-    CHAT_ID = "-10***218"   # Замените на реальный ID чата
+    BOT_TOKEN = "6536518582:AAFWk_uRw3x0imnxhyT8kgNhb_3xOFO-yd0"
+    CHAT_ID = "-1001906145218"
     
-    bot = TelegramBot(WORKER_URL, BOT_TOKEN, CHAT_ID)
+    bot = TelegramBot(WORKER_URL, BOT_TOKEN, CHAT_ID, max_retries=5)
     
     # Тестовое сообщение
     bot.send_message("🚀 Бот запущен и готов к работе!")
