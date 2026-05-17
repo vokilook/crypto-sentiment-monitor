@@ -14,21 +14,91 @@ from telegram_bot import TelegramBot
 def get_bitcoin_price():
     """Получает текущую цену Bitcoin с Binance"""
     try:
+        # Пробуем стандартный endpoint
         url = "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
+        print(f"  Запрос к Binance API...")
+        
         response = requests.get(url, timeout=10)
+        
+        # Проверяем статус ответа
+        if response.status_code != 200:
+            print(f"  Ошибка API: статус {response.status_code}")
+            # Пробуем альтернативный endpoint
+            url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    'price': float(data['price']),
+                    'price_change_percent': 0,  # Нет данных об изменении
+                    'high_24h': 0,
+                    'low_24h': 0,
+                    'volume': 0
+                }
+            return None
+        
         data = response.json()
+        
+        # Проверяем наличие ключей
+        if 'lastPrice' not in data:
+            print(f"  Неожиданный формат ответа: {list(data.keys())}")
+            # Пробуем альтернативный endpoint
+            alt_url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+            alt_response = requests.get(alt_url, timeout=10)
+            if alt_response.status_code == 200:
+                alt_data = alt_response.json()
+                return {
+                    'price': float(alt_data['price']),
+                    'price_change_percent': 0,
+                    'high_24h': 0,
+                    'low_24h': 0,
+                    'volume': 0
+                }
+            return None
         
         return {
             'price': float(data['lastPrice']),
-            'price_change_percent': float(data['priceChangePercent']),
-            'high_24h': float(data['highPrice']),
-            'low_24h': float(data['lowPrice']),
-            'volume': float(data['volume'])
+            'price_change_percent': float(data.get('priceChangePercent', 0)),
+            'high_24h': float(data.get('highPrice', 0)),
+            'low_24h': float(data.get('lowPrice', 0)),
+            'volume': float(data.get('volume', 0))
         }
+        
+    except requests.exceptions.Timeout:
+        print(f"  Таймаут при запросе к Binance")
+        return None
+    except requests.exceptions.ConnectionError:
+        print(f"  Ошибка соединения с Binance")
+        return None
     except Exception as e:
-        print(f"⚠️ Ошибка получения цены BTC: {e}")
+        print(f"  Неожиданная ошибка: {e}")
         return None
 
+def get_bitcoin_price_coingecko():
+    """Альтернативное получение цены BTC через CoinGecko (бесплатно, без API ключа)"""
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price"
+        params = {
+            'ids': 'bitcoin',
+            'vs_currencies': 'usd',
+            'include_24hr_change': 'true'
+        }
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                'price': data['bitcoin']['usd'],
+                'price_change_percent': data['bitcoin']['usd_24h_change'],  # Исправлено!
+                'high_24h': 0,
+                'low_24h': 0,
+                'volume': 0
+            }
+        return None
+    except Exception as e:
+        print(f"  CoinGecko ошибка: {e}")
+        return None
+    
 class NewsMonitor:
     def __init__(self):
         print("Инициализация анализатора тональности...")
@@ -130,9 +200,17 @@ if __name__ == "__main__":
     # Получаем цену BTC
     print("\n💰 Получение цены Bitcoin...")
     btc_data = get_bitcoin_price()
+    if not btc_data:
+        print("  Пробуем альтернативный источник (CoinGecko)...")
+        btc_data = get_bitcoin_price_coingecko()
+        
     if btc_data:
-        print(f"   BTC: ${btc_data['price']:,.2f} ({btc_data['price_change_percent']:+.2f}%)")
-    
+        print(f"   BTC: ${btc_data['price']:,.2f}")
+        if btc_data['price_change_percent'] != 0:
+            print(f"   24h изменение: {btc_data['price_change_percent']:+.2f}%")
+    else:
+        print("  ⚠️ Не удалось получить цену BTC")
+
     # Создаем монитор
     monitor = NewsMonitor()
     
